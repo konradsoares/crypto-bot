@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 import ccxt
 import pandas as pd
@@ -25,14 +26,14 @@ def _tf_to_cc_minutes(tf: str):
         return int(tf[:-1]) * 60
     if tf.endswith("d"):
         return int(tf[:-1]) * 60 * 24
-    # default 5 minutes
     return 5
 
 
 def _load_ohlcv_cryptocompare(symbol: str, timeframe: str = "5m", limit: int = 300):
     """
-    Use CryptoCompare histo* endpoints. Requires CRYPTOCOMPARE_API_KEY in env.
-    Supports minute/hour/day; we aggregate by 'aggregate' param (e.g. 5m -> histominute&aggregate=5).
+    Use CryptoCompare histo* endpoints.
+    Requires CRYPTOCOMPARE_API_KEY in env.
+    Minute/Hour/Day are chosen based on timeframe; we use 'aggregate' for 5m, 15m, etc.
     """
     api_key = os.getenv("CRYPTOCOMPARE_API_KEY", "")
     if not api_key:
@@ -43,21 +44,23 @@ def _load_ohlcv_cryptocompare(symbol: str, timeframe: str = "5m", limit: int = 3
 
     if mins < 60:
         url = "https://min-api.cryptocompare.com/data/v2/histominute"
-        aggregate = mins
+        aggregate = max(1, mins)
     elif mins % 60 == 0 and mins < 24 * 60:
         url = "https://min-api.cryptocompare.com/data/v2/histohour"
-        aggregate = mins // 60
+        aggregate = max(1, mins // 60)
     else:
         url = "https://min-api.cryptocompare.com/data/v2/histoday"
         aggregate = max(1, mins // (24 * 60))
 
+    # CryptoCompare throws if toTs is invalid. Either omit it or pass an int.
     params = {
         "fsym": base,
         "tsym": quote,
-        "limit": limit,
-        "aggregate": aggregate,
-        "toTs": "",  # latest
+        "limit": int(limit),
+        "aggregate": int(aggregate),
+        # "toTs": int(time.time())  # optional; omit for latest
     }
+
     headers = {"authorization": f"Apikey {api_key}"}
     r = requests.get(url, params=params, headers=headers, timeout=20)
     r.raise_for_status()
@@ -65,7 +68,7 @@ def _load_ohlcv_cryptocompare(symbol: str, timeframe: str = "5m", limit: int = 3
     if data.get("Response") != "Success":
         raise RuntimeError(f"CryptoCompare error: {data.get('Message')}")
 
-    rows = data["Data"]["Data"]  # list of candles with 'time','open','high','low','close','volumefrom','volumeto'
+    rows = data["Data"]["Data"]  # fields: time, open, high, low, close, volumefrom, volumeto
     df = pd.DataFrame(rows)
     if df.empty:
         return df
@@ -80,14 +83,14 @@ def load_ohlcv(symbol, timeframe="5m", limit=300, exchange="binance", testnet=Tr
     """
     Market data loader with two modes:
     - MARKET_DATA_PROVIDER=cryptocompare -> always use CryptoCompare
-    - otherwise try CCXT (exchange); if ExchangeNotAvailable, fall back to CryptoCompare
+    - otherwise try CCXT (exchange); on failure, fall back to CryptoCompare
     """
     provider = os.getenv("MARKET_DATA_PROVIDER", "").lower()
 
     if provider == "cryptocompare":
         return _load_ohlcv_cryptocompare(symbol, timeframe, limit)
 
-    # Default: try CCXT first
+    # Try CCXT first
     try:
         ex = _get_exchange(exchange, testnet=testnet)
         ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
@@ -95,7 +98,7 @@ def load_ohlcv(symbol, timeframe="5m", limit=300, exchange="binance", testnet=Tr
         df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
         return df
     except Exception as e:
-        # common on GitHub Actions with Binance testnet: 451 Restricted Location
+        # Fallback to CryptoCompare (e.g., Binance testnet geo-blocked on CI)
         try:
             return _load_ohlcv_cryptocompare(symbol, timeframe, limit)
         except Exception as ee:
