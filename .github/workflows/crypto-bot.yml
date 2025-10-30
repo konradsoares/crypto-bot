@@ -32,6 +32,7 @@ jobs:
           BUDGET_USDT: "10000"
           VERBOSE: "1"          # <— show per-symbol status
           HEARTBEAT: "1"        # <— optional Telegram heartbeat
+          AI_DEBUG: "1"    # include core features + LLM rationale (short)
         run: |
           python run_bot.py --symbols "$SYMBOLS" --tf "$TIMEFRAME" --budget "$BUDGET_USDT"
 
@@ -39,6 +40,11 @@ jobs:
         shell: bash
         run: |
           echo "## Crypto Bot Summary" >> $GITHUB_STEP_SUMMARY
+          if [ -f logs/ai_decisions.csv ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**AI decisions (tail)**" >> $GITHUB_STEP_SUMMARY
+            tail -n 10 logs/ai_decisions.csv | sed 's/^/`/;s/$/`/' >> $GITHUB_STEP_SUMMARY
+          fi
           if [ -f logs/trades.csv ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Recent trades**" >> $GITHUB_STEP_SUMMARY
@@ -50,11 +56,6 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Equity snapshots (tail)**" >> $GITHUB_STEP_SUMMARY
             tail -n 5 logs/equity.csv | sed 's/^/`/;s/$/`/' >> $GITHUB_STEP_SUMMARY
-          fi
-          if [ -f state.json ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**State**" >> $GITHUB_STEP_SUMMARY
-            jq -c '.' state.json | sed 's/^/`/;s/$/`/' >> $GITHUB_STEP_SUMMARY || true
           fi
 
       - name: Upload logs as artifacts

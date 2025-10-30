@@ -6,6 +6,7 @@ STATE = BASE_DIR / "state.json"
 LOGS_DIR = BASE_DIR / "logs"
 TRADES_CSV = LOGS_DIR / "trades.csv"
 EQUITY_CSV = LOGS_DIR / "equity.csv"
+AI_CSV = LOGS_DIR / "ai_decisions.csv"
 
 LOGS_DIR.mkdir(exist_ok=True, parents=True)
 
@@ -54,6 +55,19 @@ def append_trade(ts, side, symbol, qty, price, pnl_frac=None, pnl_usdt=None, not
             "" if pnl_frac is None else f"{pnl_frac:.8f}",
             "" if pnl_usdt is None else f"{pnl_usdt:.2f}",
             note
+        ])
+
+def append_ai_decision(ts, symbol, price, ai_score, ai_conf, passed, use_llm, pattern, ta_buy, ta_sell, note=""):
+    header = ["ts","symbol","price","ai_score","ai_conf","passed","use_llm","pattern","ta_buy","ta_sell","note"]
+    exists = AI_CSV.exists()
+    with open(AI_CSV, "a", newline="") as f:
+        w = csv.writer(f)
+        if not exists: w.writerow(header)
+        w.writerow([
+            ts, symbol, f"{price:.8f}", f"{ai_score:.1f}", f"{ai_conf:.0f}",
+            "1" if passed else "0", "1" if use_llm else "0",
+            pattern or "", "1" if ta_buy else "0", "1" if ta_sell else "0",
+            note or ""
         ])
 
 def append_equity(ts, equity_usdt, deposits_usdt, realized_pnl_frac, note=""):

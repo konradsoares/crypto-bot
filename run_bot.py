@@ -14,6 +14,7 @@ from utils import storage
 from utils.pnl import next_trailing_sl
 from utils.telegram import notify
 
+from ai.feature_engineering import build_features
 
 def parse_args():
     ap = argparse.ArgumentParser()
@@ -110,10 +111,34 @@ def main():
 
         pos = state["positions"].get(sym, {"qty": 0.0, "avg": 0.0, "sl": 0.0, "tp": 0.0, "trail_pct": 0.0})
 
+        ai_debug = str(os.getenv("AI_DEBUG","0")).lower() in ("1","true","yes","on")
+        feat_note = ""
+        if ai_debug:
+            feats = build_features(df)
+            # keep it concise
+            core = {k: round(float(feats[k]), 4) for k in ("ema_gap_pct","slope_20_pct","adx14","rsi14","atr14_pct","vol_rank_20") if k in feats}
+            feat_note = f"feats={core}"
+
+        # Candlestick confirmation (we want the name whether it passes or not)
+        pattern_name = None
+        if cfg.get("signals", {}).get("require_bullish_pattern", True):
+            ok_pat, pattern_name = bullish_pattern_hit(df, tuple(cfg["signals"].get("allowed_patterns", [])))
+        else:
+            ok_pat, pattern_name = (True, None)
+
+        # Log exactly what's happening
         logging.info(
             f"{sym} @ {price:.2f} | TA buy={sig['buy']} sell={sig['sell']} | "
-            f"AI={ai['ai_score']:.1f}/{ai['ai_conf']:.0f}% pass={ai['passed']} | "
-            f"pos_qty={pos['qty']:.6f} sl={pos['sl']:.2f} tp={pos['tp']:.2f}"
+            f"AI={ai['ai_score']:.1f}/{ai['ai_conf']:.0f}% pass={ai['passed']} "
+            f"use_llm={ai['use_llm']} | pattern={pattern_name or 'none'} | {feat_note}"
+        )
+
+        # Persist an AI decision row every run
+        storage.append_ai_decision(
+            storage.now_iso(), sym, price,
+            ai["ai_score"], ai["ai_conf"], ai["passed"], ai["use_llm"],
+            pattern_name, sig["buy"], sig["sell"],
+            ai.get("rationale","")[:120] if ai_debug else ""  # short rationale only when debugging
         )
 
         # -------- EXIT MANAGEMENT (always evaluated; we only sell if we own) --------
@@ -177,12 +202,9 @@ def main():
 
         # -------- ENTRY (only if daily gate allows; buy only with TA+AI and optional pattern) --------
         if allow_new_entries and pos["qty"] <= 0 and sig["buy"] and ai["passed"]:
-            # Optional bullish candlestick confirmation
-            if cfg.get("signals", {}).get("require_bullish_pattern", True):
-                ok, pat = bullish_pattern_hit(df, tuple(cfg["signals"].get("allowed_patterns", [])))
-                if not ok:
-                    logging.info(f"{sym}: skipped — no bullish candlestick")
-                    continue  # no bullish confirmation → skip
+            if cfg.get("signals", {}).get("require_bullish_pattern", True) and not ok_pat:
+                logging.info(f"{sym}: skipped — no bullish candlestick")
+                continue  # no bullish confirmation → skip
 
             qty = position_size(args.budget, price, cfg["risk"]["risk_pct"], sig["sl"])
             if qty > 0:
