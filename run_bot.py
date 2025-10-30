@@ -1,6 +1,7 @@
 import os
 import argparse
 import yaml
+import logging
 
 from adapters.data_ccxt import load_ohlcv
 from adapters.broker_binance import BinanceBroker
@@ -54,6 +55,11 @@ def main():
     args = parse_args()
     cfg = load_cfg(args.config)
 
+    # Verbosity / heartbeat
+    verbose = str(os.getenv("VERBOSE", "0")).lower() in ("1", "true", "yes", "on")
+    heartbeat = str(os.getenv("HEARTBEAT", "0")).lower() in ("1", "true", "yes", "on")
+    logging.basicConfig(level=logging.INFO if verbose else logging.WARNING, format="%(message)s")
+
     dry = str(os.getenv("DRY_RUN", "true")).lower() == "true"
     broker = BinanceBroker(
         os.getenv("BINANCE_API_KEY", ""),
@@ -72,6 +78,7 @@ def main():
     allow_new_entries, reason = daily_risk_gate(state, cfg, day)
     if not allow_new_entries:
         notify(f"⏸️ New entries blocked: {reason}")
+        logging.info(f"Daily gate active: {reason}")
 
     # Resolve timeframe once (config runtime wins; CLI --tf is fallback)
     timeframe = cfg.get("runtime", {}).get("timeframe", args.tf)
@@ -86,10 +93,14 @@ def main():
     # Symbol iteration
     symbols = args.symbols if isinstance(args.symbols, list) else [s.strip() for s in str(args.symbols).split(",")]
 
+    buys = 0
+    sells = 0
+
     for sym in [s.strip() for s in symbols]:
         # -------- DATA --------
         df = load_ohlcv(sym, timeframe, limit=300, exchange=exchange, testnet=True)
         if df is None or len(df) == 0:
+            logging.info(f"{sym}: no data")
             continue
 
         # -------- TA DIRECTION + AI QUALITY --------
@@ -99,12 +110,19 @@ def main():
 
         pos = state["positions"].get(sym, {"qty": 0.0, "avg": 0.0, "sl": 0.0, "tp": 0.0, "trail_pct": 0.0})
 
+        logging.info(
+            f"{sym} @ {price:.2f} | TA buy={sig['buy']} sell={sig['sell']} | "
+            f"AI={ai['ai_score']:.1f}/{ai['ai_conf']:.0f}% pass={ai['passed']} | "
+            f"pos_qty={pos['qty']:.6f} sl={pos['sl']:.2f} tp={pos['tp']:.2f}"
+        )
+
         # -------- EXIT MANAGEMENT (always evaluated; we only sell if we own) --------
         if pos["qty"] > 0:
             # Optional trailing stop ratchet
             new_sl = next_trailing_sl(pos, price)
             if new_sl > pos["sl"]:
                 pos["sl"] = new_sl
+                logging.info(f"{sym}: trail ratchet → SL {pos['sl']:.2f}")
 
             # Take Profit
             if price >= pos["tp"]:
@@ -122,6 +140,8 @@ def main():
 
                     storage.append_trade(storage.now_iso(), "SELL", sym, qty, price, pnl_frac, pnl_usdt, "TP")
                     notify(f"🎯 TP SELL {sym} qty={qty:.6f} @ {price:.2f} | +{pnl_usdt:.2f} USDT | paper={str(dry).lower()}")
+                    logging.info(f"{sym}: TP SELL qty={qty:.6f} @ {price:.2f}")
+                    sells += 1
 
                 # Flat position
                 state["positions"][sym] = {"qty": 0.0, "avg": 0.0, "sl": 0.0, "tp": 0.0, "trail_pct": 0.0}
@@ -142,6 +162,8 @@ def main():
 
                     storage.append_trade(storage.now_iso(), "SELL", sym, qty, price, pnl_frac, pnl_usdt, "SL")
                     notify(f"🛑 SL SELL {sym} qty={qty:.6f} @ {price:.2f} | {pnl_usdt:.2f} USDT | paper={str(dry).lower()}")
+                    logging.info(f"{sym}: SL SELL qty={qty:.6f} @ {price:.2f}")
+                    sells += 1
 
                     # Count a loss toward the streak if negative
                     if pnl_usdt < 0:
@@ -159,6 +181,7 @@ def main():
             if cfg.get("signals", {}).get("require_bullish_pattern", True):
                 ok, pat = bullish_pattern_hit(df, tuple(cfg["signals"].get("allowed_patterns", [])))
                 if not ok:
+                    logging.info(f"{sym}: skipped — no bullish candlestick")
                     continue  # no bullish confirmation → skip
 
             qty = position_size(args.budget, price, cfg["risk"]["risk_pct"], sig["sl"])
@@ -180,13 +203,21 @@ def main():
                     f"AI {ai['ai_score']:.1f}/{ai['ai_conf']:.0f}% "
                     f"{'(LLM)' if ai['use_llm'] else '(ML)'} | paper={str(dry).lower()}"
                 )
+                logging.info(f"{sym}: BUY qty={qty:.6f} @ {price:.2f}")
+                buys += 1
 
     # ----- Equity snapshot (realized PnL only; simple, conservative) -----
     deposits = storage.total_deposits(state)
     equity_proxy = deposits + state.get("realized_pnl_usdt", 0.0)
     storage.append_equity(storage.now_iso(), equity_proxy, deposits, state.get("realized_pnl_frac", 0.0), "auto")
-
     storage.write_state(state)
+
+    # Heartbeat / summary
+    pnl_today = float(state["day_pnl_usdt"].get(day, 0.0))
+    summary = f"Processed {len(symbols)} symbols | buys={buys} sells={sells} | day_pnl_usdt={pnl_today:.2f} | equity={equity_proxy:.2f}"
+    logging.info(summary)
+    if heartbeat:
+        notify(f"🤖 heartbeat: {summary}")
 
 
 if __name__ == "__main__":
