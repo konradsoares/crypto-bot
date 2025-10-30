@@ -1,0 +1,18 @@
+{
+  "base_ccy": "USDT",
+  "deposits": [
+    {
+      "ts": "2025-10-30T22:02:32Z",
+      "amount": 10000.0,
+      "note": "initial"
+    }
+  ],
+  "withdrawals": [],
+  "positions": {},
+  "realized_pnl_frac": 0.0,
+  "realized_pnl_usdt": 0.0,
+  "day_pnl_frac": {},
+  "day_pnl_usdt": {},
+  "loss_streak": 0,
+  "last_trade_day": "2025-10-30"
+}

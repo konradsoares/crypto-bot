@@ -1,0 +1,19 @@
+risk:
+  risk_pct: 0.005
+  max_daily_loss_usdt: 100
+  target_daily_profit_usdt: 150
+  max_consecutive_losses: 3
+
+signals:
+  lookback_short: 20
+  lookback_long: 50
+  atr_len: 14
+  breakout_len: 20
+  require_bullish_pattern: true
+  allowed_patterns: ["bullish_engulfing","hammer","morning_star"]
+
+runtime:
+  symbols: ["BTC/USDT","ETH/USDT"]
+  exchange: "binance"
+  timeframe: "5m"         # ← lives here, not under signals
+  dry_run: true
