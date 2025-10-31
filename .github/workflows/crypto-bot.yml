@@ -32,7 +32,10 @@ jobs:
           BUDGET_USDT: "10000"
           VERBOSE: "1"          # <— show per-symbol status
           HEARTBEAT: "1"        # <— optional Telegram heartbeat
-          AI_DEBUG: "1"    # include core features + LLM rationale (short)
+          USE_OPENAI: "1"
+          AI_FORCE_LLM: "1"      # force an LLM call every cycle
+          AI_DEBUG: "1"          # include features + rationale snippet in CSV/logs
+          OPENAI_MODEL: "gpt-4o-mini"
         run: |
           python run_bot.py --symbols "$SYMBOLS" --tf "$TIMEFRAME" --budget "$BUDGET_USDT"
 
@@ -42,8 +45,8 @@ jobs:
           echo "## Crypto Bot Summary" >> $GITHUB_STEP_SUMMARY
           if [ -f logs/ai_decisions.csv ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**AI decisions (tail)**" >> $GITHUB_STEP_SUMMARY
-            tail -n 10 logs/ai_decisions.csv | sed 's/^/`/;s/$/`/' >> $GITHUB_STEP_SUMMARY
+            echo "**AI decisions (today)**" >> $GITHUB_STEP_SUMMARY
+            awk -F, -v d="$(date -u +%Y-%m-%d)" 'NR==1 || index($1,d)==1 {print}' logs/ai_decisions.csv | tail -n 15 | sed 's/^/`/;s/$/`/' >> $GITHUB_STEP_SUMMARY
           fi
           if [ -f logs/trades.csv ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
