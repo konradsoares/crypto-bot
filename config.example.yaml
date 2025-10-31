@@ -9,7 +9,7 @@ signals:
   lookback_long: 50
   atr_len: 14
   breakout_len: 20
-  require_bullish_pattern: true
+  require_bullish_pattern: false
   allowed_patterns: ["bullish_engulfing","hammer","morning_star"]
 
 runtime:

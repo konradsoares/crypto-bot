@@ -37,6 +37,9 @@ jobs:
           AI_FORCE_LLM: "1"      # force an LLM call every cycle
           AI_DEBUG: "1"          # include features + rationale snippet in CSV/logs
           OPENAI_MODEL: "gpt-4o-mini"
+          ALLOW_AI_ONLY: "1"
+          AI_SCORE_PASS: "65"         # or 60 if you want to force it
+          AI_CONF_PASS: "60"
         run: |
           python run_bot.py --symbols "$SYMBOLS" --tf "$TIMEFRAME" --budget "$BUDGET_USDT"
 
