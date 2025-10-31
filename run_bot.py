@@ -101,6 +101,19 @@ def main():
         state["loss_streak"] = 0
         state["last_trade_day"] = day
 
+    # --- PAPER WALLET INIT (new) ---
+    # Cash only exists in paper mode; use deposits minus any pre-existing open positions’ cost
+    if "cash_usdt" not in state:
+        deposits = storage.total_deposits(state)
+        # reconstruct cost of current open positions (if any) to not over-credit cash
+        open_cost = 0.0
+        for _sym, p in state.get("positions", {}).items():
+            if p.get("qty", 0.0) > 0 and p.get("avg", 0.0) > 0:
+                open_cost += float(p["qty"]) * float(p["avg"])
+        state["cash_usdt"] = float(deposits) - float(open_cost)
+        if state["cash_usdt"] < 0:
+            state["cash_usdt"] = 0.0  # be conservative
+            
     # Daily new-entry gate (exits are still allowed)
     allow_new_entries, reason = daily_risk_gate(state, cfg, day)
     if not allow_new_entries:
@@ -199,7 +212,9 @@ def main():
                     pnl_frac = (price - pos["avg"]) / pos["avg"]
                     pnl_usdt = qty * (price - pos["avg"])
                     broker.market_sell(sym, qty)
-
+                                        # --- PAPER WALLET: credit cash with proceeds ---
+                    if dry:
+                        state["cash_usdt"] += qty * price
                     # Ledgers
                     state["realized_pnl_frac"] += pnl_frac
                     state["day_pnl_frac"][day] = state["day_pnl_frac"].get(day, 0.0) + pnl_frac
@@ -257,6 +272,14 @@ def main():
 
             qty = position_size(args.budget, price, cfg["risk"]["risk_pct"], sig["sl"])
             if qty > 0:
+                cost = qty * price
+                # --- PAPER WALLET: require cash ---
+                if dry:
+                    if state["cash_usdt"] < cost:
+                        logging.info(f"{sym}: skip BUY — insufficient cash (need {cost:.2f}, have {state['cash_usdt']:.2f})")
+                        continue
+                    state["cash_usdt"] -= cost
+
                 broker.market_buy(sym, qty)
                 state["positions"][sym] = {
                     "qty": qty,
@@ -280,16 +303,33 @@ def main():
     # ------------------------------
     # Equity snapshot (realized-only proxy). Mark-to-market can be added later.
     # ------------------------------
+    # --- MTM EQUITY: cash + market value of all open positions ---
     deposits = storage.total_deposits(state)
-    equity_proxy = deposits + state.get("realized_pnl_usdt", 0.0)
-    storage.append_equity(storage.now_iso(), equity_proxy, deposits, state.get("realized_pnl_frac", 0.0), "auto")
+    cash = float(state.get("cash_usdt", 0.0))
+
+    # recompute per-symbol last price for valuation (we already have 'price' for the last processed symbol only)
+    # so quickly reload prices for symbols we track positions in
+    mkt_value = 0.0
+    for _sym, p in state.get("positions", {}).items():
+        if p.get("qty", 0.0) > 0:
+            try:
+                _df = load_ohlcv(_sym, timeframe, limit=2, exchange=exchange, testnet=True)
+                _px = float(_df["close"].iloc[-1]) if _df is not None and len(_df) else float(p["avg"])
+            except Exception:
+                _px = float(p["avg"])
+            mkt_value += float(p["qty"]) * _px
+
+    equity_mtm = cash + mkt_value
+    # for backward compatibility, keep realized frac, but note is now mtm
+    storage.append_equity(storage.now_iso(), equity_mtm, deposits, state.get("realized_pnl_frac", 0.0), "mtm")
     storage.write_state(state)
 
     # Human-friendly heartbeat/summary (also to Telegram if enabled)
     pnl_today = float(state["day_pnl_usdt"].get(day, 0.0))
     summary = (
         f"Processed {len(symbols)} symbols | buys={buys} sells={sells} | "
-        f"day_pnl_usdt={pnl_today:.2f} | equity={equity_proxy:.2f}"
+        f"cash={cash:.2f} | mkt_value={mkt_value:.2f} | equity_mtm={equity_mtm:.2f} | "
+        f"day_pnl_usdt={pnl_today:.2f}"
     )
     logging.info(summary)
     if heartbeat:
