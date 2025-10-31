@@ -149,7 +149,14 @@ def main():
         # TA gives directional bias + levels (sl/tp/price) but not size
         sig = signal(df, **sig_params)
         price = float(sig["price"])
-
+        if verbose:
+            sl = sig.get("sl"); tp = sig.get("tp")
+            bo_up = sig.get("bo_up"); bo_dn = sig.get("bo_dn")
+            logging.info(
+                f"{sym} TA detail | sl={sl:.2f} tp={tp:.2f} bo_up={bo_up:.2f} bo_dn={bo_dn:.2f}"
+                if None not in (sl, tp, bo_up, bo_dn) else
+                f"{sym} TA detail | keys={list(sig.keys())}"
+            )
         # AI gate: ML baseline; optionally calls OpenAI when enabled (see strategies/momentum_ai.py)
         ai = ai_momentum_gate(df)
 
