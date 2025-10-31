@@ -33,6 +33,7 @@ jobs:
           VERBOSE: "1"          # <— show per-symbol status
           HEARTBEAT: "1"        # <— optional Telegram heartbeat
           USE_OPENAI: "1"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}          
           AI_FORCE_LLM: "1"      # force an LLM call every cycle
           AI_DEBUG: "1"          # include features + rationale snippet in CSV/logs
           OPENAI_MODEL: "gpt-4o-mini"
