@@ -163,16 +163,23 @@ def main():
         # Log a compact, definitive line per symbol so you KNOW AI + patterns ran
         logging.info(
             f"{sym} @ {price:.2f} | TA buy={sig['buy']} sell={sig['sell']} | "
-            f"AI={ai['ai_score']:.1f}/{ai['ai_conf']:.0f}% pass={ai['passed']} use_llm={ai['use_llm']} | "
+            f"AI={ai['ai_score']:.1f}/{ai['ai_conf']:.0f}% pass={ai['passed']} "
+            f"use_llm={ai['use_llm']} status={ai.get('llm_status','')} | "
             f"pattern={pattern_str} | pos_qty={pos['qty']:.6f} sl={pos['sl']:.2f} tp={pos['tp']:.2f} | {feat_note}"
         )
 
-        # Persist AI decision row (proves AI ran; pattern is recorded)
+        # Persist AI decision row (put status/rationale in note when AI_DEBUG=1)
+        note_txt = ""
+        if ai_debug:
+            # status first, then rationale snippet
+            rat = ai.get("rationale","")
+            note_txt = f"status={ai.get('llm_status','')}" + (f" | {rat[:120]}" if rat else "")
+
         storage.append_ai_decision(
             storage.now_iso(), sym, price,
             ai["ai_score"], ai["ai_conf"], ai["passed"], ai["use_llm"],
             pattern_str, sig["buy"], sig["sell"],
-            ai.get("rationale", "")[:160] if ai_debug else ""
+            note_txt
         )
 
         # =========================================
